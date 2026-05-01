@@ -71,7 +71,9 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             cat << 'EOF' > prompt.txt
-          Check for upstream repository modifications from https://github.com/WildKernels/OnePlus_KernelSU_SUSFS. If there are new updates, merge them into the current branch, resolve any conflicts if necessary, and create a Pull Request. YOU MUST STRICTLY FOLLOW THESE MERGE GUIDELINES:
+          Check for upstream repository modifications from https://github.com/WildKernels/OnePlus_KernelSU_SUSFS.
+          If there are new updates, YOU MUST use standard `git merge upstream/main` (or equivalent) into the current branch so that all individual upstream commits are preserved in the Git history. DO NOT squash the upstream changes into a single commit!
+          After the merge, resolve any conflicts, and then create a Pull Request. YOU MUST STRICTLY FOLLOW THESE MERGE GUIDELINES:
           
           # Project Maintenance & Upstream Sync Guidelines (OnePlus_KernelSU_SUSFS)
           This project is a fork of WildKernels, but maintains independence in core logic and Root solution selection. You must strictly adhere to the following guidelines.
@@ -127,7 +129,6 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: xiaomi-token-plan-cn/mimo-v2-pro
           prompt: ${{ steps.prep.outputs.prompt }}
@@ -241,7 +242,6 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: xiaomi-token-plan-cn/mimo-v2-pro
           prompt: "The matrix test build failed for one or more devices. Please check the GitHub Actions logs for the failed 'test-build' jobs to identify the compilation errors. Fix the code to resolve these compilation errors and push the updates to the PR branch.\n\nIF YOU ENCOUNTER A TOOLCHAIN CACHE ERROR (e.g., '[FATAL ERROR] Toolchain AnyKernel3... NOT FOUND in GitHub Release cache!'):\nThis means a newly added toolchain hasn't been mirrored to GitHub releases yet. You MUST manually trigger the mirror workflow for your PR branch using the following command in your terminal:\n`gh workflow run mirror-toolchains.yml --ref <your-pr-branch-name>`\nWait a minute for it to complete, and then trigger a new test build by pushing an empty commit."
