@@ -93,76 +93,27 @@ jobs:
           fi
 
           echo "::group::Sanitize & Ignore Rules"
-          find manifests -name "*.xml" -exec sed -i 's|github.com/WildKernels/AnyKernel3|github.com/huangdihd/AnyKernel3|g' {} +
-          find manifests -name "*.xml" -exec sed -i 's|fetch="https://github.com/WildKernels" name="wild"|fetch="https://github.com/huangdihd" name="wild"|g' {} +
-          find manifests -name "*.xml" -exec sed -i -E 's/(name="AnyKernel3".*revision=")[^"]+(")/\1gki-2.0\2/g' {} +
-          find configs -name "*.json" -exec sed -i 's/"uname": "OP-WILD"/"uname": "OP-RESUKISU"/g' {} +
-          sed -i 's|https://github.com/WildKernels/AnyKernel3|https://github.com/huangdihd/AnyKernel3|g' .github/actions/build-kernel/action.yml
+          python3 .github/opencode/sanitize.py
           
-          python3 -c "
-          import os
-          path = '.github/actions/build-kernel/action.yml'
-          if os.path.exists(path):
-            with open(path, 'r') as f: lines = f.readlines()
-            new_lines, skip = [], False
-            for line in lines:
-                if '- name: Add KernelSU-Next' in line or '- name: Add KSUN' in line: skip = True
-                elif skip and line.startswith('    - name:'): skip = False
-                if not skip: new_lines.append(line)
-            with open(path, 'w') as f: f.writelines(new_lines)
-          "
-
+          echo ".gitignore" >> .gitignore
+          echo "opencode.json" >> .gitignore
+          echo "final_prompt.txt" >> .gitignore
+          echo "user_comment.txt" >> .gitignore
+          
           git add -A
           git commit -m "chore: sanitize codebase and update gitignore" || echo "No changes to commit"
           echo "::endgroup::"
 
-          echo "::group::Generating ignored opencode.json"
-          cat << EOF > opencode.json
-          {
-            "\$schema": "https://opencode.ai/config.json",
-            "provider": {
-              "custom-openai": {
-                "npm": "@ai-sdk/openai-compatible",
-                "name": "Custom OpenAI Provider",
-                "options": {
-                  "baseURL": "${OPENAI_BASE_URL}",
-                  "apiKey": "${OPENAI_API_KEY}",
-                  "headers": {
-                    "Authorization": "Bearer ${OPENAI_API_KEY}"
-                  }
-                },
-                "models": {
-                  "${OPENAI_MODEL}": {
-                    "name": "Custom Model"
-                  }
-                }
-              }
-            }
-          }
-          EOF
+          echo "::group::Preparing opencode.json"
+          envsubst < .github/opencode/opencode.json > opencode.json
           echo "::endgroup::"
 
       - name: Prepare Prompt
         id: prep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat << 'EOF' > guidelines.txt
-          STRICT WORKFLOW RULE (CRITICAL): 
-          - You must remain on the CURRENT branch. Do not switch to or create any other branches.
-          - STRICT SECURITY RULE: Under NO circumstances are you allowed to modify the 'main' branch or any other existing permanent branches directly. 
-          - Do not attempt to manually create Pull Requests or push code using external command-line tools.
-          - YOUR TASK: Simply perform the requested modifications on the CURRENT temporary branch. Stay exactly where you are.
-
-          # Project Maintenance & Safety Guidelines
-          ## 🚫 Strictly Forbidden
-          1. Reject Normalize Scheme: NO `normalized` keyword in `.github/workflows/build-kernel-release.yml`.
-          2. Reject KSUN/WildKSU: NO `KSUN` or `WildKSU` in `.github/actions/action.yml`.
-          3. Preserve Telegram Links: Keep `t.me/huangdihd` and `t.me/huangdihd_wildkernel`.
-          4. Preserve AnyKernel3 Repo: MUST point to `https://github.com/huangdihd/AnyKernel3`.
-          5. Reject WILD Suffix: `"uname"` MUST be `"OP-RESUKISU"`. NO `-OP-WILD`.
-          6. Preserve USB DWC3 & OTG Support: DO NOT remove this step in `action.yml`.
-          7. Preserve Correct ReSukiSU Repository: MUST use `https://github.com/ReSukiSU/ReSukiSU`.
-          EOF
-
+          TASK_DESC="Synchronizing upstream and resolving conflicts."
           if [[ "${{ github.event_name }}" == "schedule" || ( "${{ github.event_name }}" == "workflow_dispatch" && ( "${{ github.event.inputs.prompt }}" == "" || "${{ github.event.inputs.prompt }}" == "null" ) ) ]]; then
             {
               echo "A 'git merge upstream/main' has already been attempted. Automatic scripts have also fixed AnyKernel3 URLs, 'uname' fields, and KSUN removal."
@@ -170,22 +121,25 @@ jobs:
               echo "1. Resolve any UNRESOLVED CONFLICTS."
               echo "2. Final audit against guidelines."
               echo ""
-              cat guidelines.txt
+              cat .github/opencode/guidelines.txt
             } > final_prompt.txt
           elif [[ "${{ github.event_name }}" == "issue_comment" || "${{ github.event_name }}" == "pull_request_review_comment" ]]; then
-            cat << 'COMMENT_EOF' > user_comment.txt
-          ${{ github.event.comment.body }}
-          COMMENT_EOF
-            { echo "Interactive mode. The user requested the following in a PR comment:"; echo "-----------------"; cat user_comment.txt; echo "-----------------"; echo ""; echo "Please fulfill the user's request while strictly adhering to these guidelines:"; echo ""; cat guidelines.txt; } > final_prompt.txt
+            TASK_DESC="Processing user request from comment."
+            PR_OR_ISSUE_NUMBER="${{ github.event.issue.number || github.event.pull_request.number }}"
+            echo "Fetching comment history for #$PR_OR_ISSUE_NUMBER..."
+            gh api repos/${{ github.repository }}/issues/$PR_OR_ISSUE_NUMBER/comments | jq -r '.[].body' > user_comment.txt
+            { echo "Interactive mode. The user requested the following in a PR/Issue comment thread:"; echo "-----------------"; cat user_comment.txt; echo "-----------------"; echo ""; echo "Please fulfill the user's request while strictly adhering to these guidelines:"; echo ""; cat .github/opencode/guidelines.txt; } > final_prompt.txt
             rm -f user_comment.txt
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.prompt }}" != "" ]]; then
-            { echo "${{ github.event.inputs.prompt }}"; echo ""; echo "---"; cat guidelines.txt; } > final_prompt.txt
+            TASK_DESC="Processing manual workflow dispatch prompt."
+            { echo "${{ github.event.inputs.prompt }}"; echo ""; echo "---"; cat .github/opencode/guidelines.txt; } > final_prompt.txt
           else
             echo "" > final_prompt.txt
           fi
 
           { echo 'prompt<<EOF'; cat final_prompt.txt; echo 'EOF'; } >> "$GITHUB_OUTPUT"
-          rm -f guidelines.txt final_prompt.txt
+          echo "task_desc=$TASK_DESC" >> "$GITHUB_OUTPUT"
+          rm -f final_prompt.txt
 
       - name: Notify TG (Agent Start)
         if: always()
@@ -195,9 +149,11 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_TEST_CHAT_ID || secrets.TG_CHAT_ID }}
         run: |
           if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then exit 0; fi
+          TASK="${{ steps.prep.outputs.task_desc }}"
+          [ -z "$TASK" ] && TASK="Unknown task"
           MSG="🚀 <b>Opencode Agent is Starting</b>"$'\n'
           MSG+="━━━━━━━━━━━━━━━━━━"$'\n'
-          MSG+="<b>Task:</b> Synchronizing upstream and resolving conflicts."
+          MSG+="<b>Task:</b> $TASK"
           IFS=' ,' read -r -a CHAT_IDS <<< "$TG_CHAT_ID"
           for ID in "${CHAT_IDS[@]}"; do
             [ -z "$ID" ] && continue
