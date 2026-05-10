@@ -1093,7 +1093,11 @@ runs:
           fi
         fi
         
-        patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
+        if ! patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"; then
+          echo "::error::SUSFS patch failed. Dumping all .rej files:"
+          find . -name "*.rej" -exec echo "=== {} ===" \; -exec cat {} \;
+          exit 1
+        fi
         
         # Revert Fake kernel patch
         if [ "$fake_patched" = 1 ]; then
