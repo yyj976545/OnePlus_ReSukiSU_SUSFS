@@ -663,6 +663,7 @@ runs:
     - name: Restore ccache cache
       id: restore-ccache-cache
       uses: ./action-source/.github/actions/cache/restore
+      continue-on-error: true
       if: ${{ inputs.clean == false || inputs.clean == 'false' }}
       with:
         cache_path: ${{ env.CCACHE_DIR }}
@@ -676,6 +677,7 @@ runs:
     - name: Restore LTO LD cache
       id: restore-lto-ld-cache
       uses: ./action-source/.github/actions/cache/restore
+      continue-on-error: true
       if: ${{ (inputs.clean == false && env.OP_LTO != 'none') || (inputs.clean == 'false' && env.OP_LTO != 'none') }}
       with:
         cache_path: ${{ env.LDCACHE_DIR }}
@@ -1473,10 +1475,27 @@ runs:
         fi
         
         echo "Patching $(basename $NTSYNC_PATCH)!"
-        if ! patch -p1 --forward < "$NTSYNC_PATCH"; then
-          echo "::error::$(basename $NTSYNC_PATCH) patch failed. Dumping all .rej files:"
-          find . -name "*.rej" -exec echo "=== {} ===" \; -exec cat {} \;
-          exit 1
+        if ! patch -p1 --forward --fuzz=3 < "$NTSYNC_PATCH"; then
+          echo "::warning::NTSync compat patch did not apply cleanly. Checking for manual fallback..."
+          REJ_COUNT=$(find . -name "*.rej" | wc -l)
+          if [ "$REJ_COUNT" -eq 1 ] && [ -f include/linux/lockdep.h.rej ]; then
+            echo "Only lockdep.h failed. Applying lockdep.h changes manually..."
+            # Add missing lockdep macros if not already present
+            grep -q '#define lockdep_assert(c)' include/linux/lockdep.h || \
+              sed -i '/#define lockdep_is_held_type(l, r)/a\#define lockdep_assert(c)\t\t\tdo { } while (0)' include/linux/lockdep.h
+            grep -q '#define lockdep_assert_once(c)' include/linux/lockdep.h || \
+              sed -i '/#define lockdep_assert(c)/a\#define lockdep_assert_once(c)\t\t\tdo { } while (0)' include/linux/lockdep.h
+            grep -q '#define lockdep_assert_not_held(l)' include/linux/lockdep.h || \
+              sed -i '/#define lockdep_assert_held(l)/a\#define lockdep_assert_not_held(l)\t\tdo { (void)(l); } while (0)' include/linux/lockdep.h
+            grep -q '#define lockdep_assert_none_held_once()' include/linux/lockdep.h || \
+              sed -i '/#define lockdep_assert_held_once(l)/a\#define lockdep_assert_none_held_once()\tdo { } while (0)' include/linux/lockdep.h
+            rm -f include/linux/lockdep.h.rej
+            echo "✅ lockdep.h manual fallback applied"
+          else
+            echo "::error::$(basename $NTSYNC_PATCH) patch failed. Dumping all .rej files:"
+            find . -name "*.rej" -exec echo "=== {} ===" \; -exec cat {} \;
+            exit 1
+          fi
         fi
         echo "Patching ntsync_base!"
         if ! patch -p1 --forward < "$NTSYNC_FOLDER/ntsync_base.patch"; then
